@@ -3,14 +3,12 @@ import pandas as pd
 
 col_map = {
     "p1":  "id",                         # IDENTIFIKAČNÍ ČÍSLO
-    "p2":  "datetime_full",              # ČASOVÉ ÚDAJE O DOPRAVNÍ NEHODĚ (day, month, year, hour, minute)
     "p2a": "date",                       # date (day, month, year)
     "p2b": "time",                       # time (hour, minute)
-
     "p4":  "location_admin",             # ÚZEMNÍ MÍSTO (region/district/police unit)
-    "p4a": "region",                     # kraj
-    "p4b": "district",                   # okres
-    "p4c": "police_unit",                # útvar
+    "p4a": "region",                     # kraj (region)
+    "p4b": "district",                   # okres (district)
+    "p4c": "police_unit",                # útvar (police unit)
 
     "p5a": "locality_type",              # LOKALITA NEHODY (in town / outside town)
 
@@ -94,12 +92,15 @@ col_map = {
     "p59g":"person_consequences"         # NÁSLEDKY (usmrcení/ těžké/ lehké/bez zranění)
 }
 
-from typing import Literal
+from typing import Callable, Literal
 from pathlib import Path
 import pandas as pd
 
 #possilbe data resources (police or waze datasets)
 type Dataset = Literal["police", "waze"]
+#type for preprocessing data
+type Preprocessor = Callable[[pd.DataFrame], pd.DataFrame]
+
 
 #in case of running in online notebook
 try:
@@ -131,11 +132,158 @@ def load_data(dataset: Dataset) -> DataFrame:
   match dataset:
     case "police":
       path = DATA_DIR / "brno_nehody.csv"
-      df = pd.read_csv(path)
-      df = df.rename(columns=col_map)
+      df = police_dataset(path)
     case "waze":
       path = DATA_DIR / "brno_alerts.csv"
       df = pd.read_csv(path)
     case _:
       raise ValueError(f"Unknown dataset: {dataset}")
   return df
+
+
+def police_dataset(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path)
+
+    preprocessors = [
+        rename_columns,
+        add_locality_label,
+        add_accident_type_label,
+        add_collision_type_label,
+        add_fixed_obstacle_type_label,
+        add_accident_character_label,
+        add_driver_alcohol_features
+    ]
+
+    df = apply_preprocessors(df, preprocessors)
+    return df
+
+def apply_preprocessors(
+    df: pd.DataFrame,
+    preprocessors: list[Preprocessor],
+) -> pd.DataFrame:
+    for p in preprocessors:
+        df = p(df)
+    return df
+
+#list of preprocessors
+def rename_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return df.rename(columns=col_map)
+
+def add_locality_label(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["locality_type_label"] = (
+        df["locality_type"]
+        .map({1: "in_city", 2: "out_of_city"})
+        .astype("category")
+    )
+    return df
+
+def add_accident_type_label(df: DataFrame) -> DataFrame:
+
+  ACCIDENT_TYPE_MAP = {
+    0: "Other",
+    1: "Moving vehicle",
+    2: "Parked vehicle",
+    3: "Fixed object",
+    4: "Pedestrian",
+    5: "Wild animal",
+    6: "Domestic animal",
+    7: "Train",
+    8: "Tram",
+    9: "Crash",
+  }
+
+  df = df.copy()
+  df["accident_type_label"] = (
+      df["accident_type"]
+        .map(ACCIDENT_TYPE_MAP)
+        .astype("category")
+  )
+  
+  return df
+
+def add_collision_type_label(df: DataFrame) -> DataFrame:
+  COLLISION_TYPE_MAP = {
+    0: "N/A",
+    1: "Frontal",
+    2: "Side",
+    3: "From side",
+    4: "Rear",
+  }
+
+  df = df.copy()
+  df["collision_type_label"] = (
+    df["collision_type"]
+      .map(COLLISION_TYPE_MAP)
+      .astype("category")
+  )
+   
+  return df
+
+def add_fixed_obstacle_type_label(df: DataFrame) -> DataFrame:
+  FIXED_OBSTACLE_TYPE_MAP = {
+      0: "N/A",
+      1: "Tree",
+      2: "Pole/Utility",
+      3: "Bollard/Sign Post",
+      4: "Guardrail",
+      5: "Other Vehicle Related Obstacle",
+      6: "Wall/Bridge",
+      7: "Railway Crossing Barrier",
+      8: "Construction Obstacle",
+      9: "Other",
+  }
+
+  df = df.copy()
+  df["fixed_obstacle_type_label"] = (
+      df["fixed_obstacle_type"]
+      .map(FIXED_OBSTACLE_TYPE_MAP)
+      .astype("category")
+  )
+
+  return df
+
+def add_accident_character_label(df: DataFrame) -> DataFrame:
+    ACCIDENT_CHARACTER_MAP = {
+        1: "Injury/Fatality",
+        2: "Material Damage Only",
+    }
+
+    df = df.copy()
+    df["accident_character_label"] = (
+        df["accident_character"]
+        .map(ACCIDENT_CHARACTER_MAP)
+        .astype("category")
+    )
+
+    return df
+
+def add_driver_alcohol_features(df: DataFrame) -> DataFrame:
+    ALCOHOL_LEVEL_MAP = {
+        0: "not_tested",
+        1: "bac_0_00_to_0_24",
+        2: "no_alcohol",
+        3: "bac_0_24_to_0_50",
+        4: "refused_test",
+        5: "unknown",
+        6: "bac_0_50_to_0_80",
+        7: "bac_0_80_to_1_00",
+        8: "bac_1_00_to_1_50",
+        9: "bac_1_50_plus",
+    }
+
+    df = df.copy()
+    df["driver_alcohol_level"] = (
+        df["alcohol_at_driver"]
+        .map(ALCOHOL_LEVEL_MAP)
+        .astype("category")
+    )
+
+    alcohol_positive_codes = {1, 3, 6, 7, 8, 9}
+
+    df["driver_alcohol_detected"] = pd.NA
+    df.loc[df["alcohol_at_driver"] == 2, "driver_alcohol_detected"] = 0
+    df.loc[df["alcohol_at_driver"].isin(alcohol_positive_codes), "driver_alcohol_detected"] = 1
+    df["driver_alcohol_detected"] = df["driver_alcohol_detected"].astype("Int8")
+
+    return df
