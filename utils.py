@@ -151,7 +151,8 @@ def police_dataset(path: Path) -> pd.DataFrame:
         add_collision_type_label,
         add_fixed_obstacle_type_label,
         add_accident_character_label,
-        add_driver_alcohol_features
+        add_driver_alcohol_features,
+        add_date_info
     ]
 
     df = apply_preprocessors(df, preprocessors)
@@ -201,6 +202,25 @@ def add_accident_type_label(df: DataFrame) -> DataFrame:
   )
   
   return df
+
+def add_date_info(df: DataFrame) -> DataFrame:
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.month
+    df["day_of_week"] = df["date"].dt.day_name()
+    
+    t = pd.to_numeric(df["time"], errors="coerce")
+
+    hour = t // 100
+    minute = t % 100
+
+    # valid time from 0-23 hours and 0-59 minutes
+    valid = hour.between(0, 23) & minute.between(0, 59)
+
+    df["hour"] = pd.NA
+    df.loc[valid, "hour"] = hour[valid].astype("int64")
+    
+    return df
 
 def add_collision_type_label(df: DataFrame) -> DataFrame:
   COLLISION_TYPE_MAP = {
